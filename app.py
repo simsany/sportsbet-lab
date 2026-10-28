@@ -174,7 +174,7 @@ def _run(payload, only_backtest=False):
     if not (len(X_train) == len(Y_train) == len(O_train)):
         raise ValueError("The data loader returned misaligned training data; refusing to train on mismatched rows.")
     if not only_backtest:
-        X_fix, _, O_fix = loader.extract_fixtures_data(input_event_status="preplay")
+        X_fix, _, O_fix = loader.extract_fixtures_data()
         if X_fix.empty:
             raise ValueError("The selected data source returned no upcoming fixtures for these leagues.")
         if not (len(X_fix) == len(O_fix)):
