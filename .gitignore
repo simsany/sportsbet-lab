@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.pkl
+*.pickle
+*.joblib
+.pytest_cache/
+.DS_Store
