@@ -180,6 +180,57 @@ def _source_label(sport, source_mode):
     return f"{SPORTS[sport]['label']} statistics"
 
 
+def _filter_today_fixtures(Xf, Of):
+    """
+    Filter only the fixture rows already returned by sports-betting.
+
+    No data is downloaded here. Xf and Of are filtered together by row
+    position to preserve the library's fixture/odds alignment.
+    """
+    if len(Xf) != len(Of):
+        raise ValueError(
+            f"Fixture/odds rows are misaligned before filtering: "
+            f"X={len(Xf)}, O={len(Of)}."
+        )
+
+    if Xf.empty:
+        return Xf, Of
+
+    # The sports-betting library returns kickoff timestamps in the index.
+    kickoffs = pd.to_datetime(Xf.index, errors="coerce")
+
+    if kickoffs.isna().any():
+        bad = [
+            str(Xf.index[i])
+            for i, invalid in enumerate(kickoffs.isna())
+            if invalid
+        ]
+        raise ValueError(
+            f"Invalid fixture kickoff timestamps returned by library: {bad[:10]}"
+        )
+
+    if kickoffs.tz is None:
+        kickoffs = kickoffs.tz_localize("UTC")
+    else:
+        kickoffs = kickoffs.tz_convert("UTC")
+
+    budapest_kickoffs = kickoffs.tz_convert("Europe/Budapest")
+    now_budapest = pd.Timestamp.now(tz="Europe/Budapest")
+    today = now_budapest.date()
+
+    mask = (
+        (budapest_kickoffs.date == today)
+        & (budapest_kickoffs > now_budapest)
+    )
+
+    positions = np.flatnonzero(mask)
+
+    return (
+        Xf.iloc[positions].copy(),
+        Of.iloc[positions].copy()
+    )
+
+
 def _run(payload, only_backtest=False):
     stage = "validate_request"
     diagnostics = []
@@ -230,20 +281,32 @@ def _run(payload, only_backtest=False):
 
         if not only_backtest:
             stage = "load_fixtures"
+
+            # The library remains responsible for retrieving fixtures and odds.
             Xf, _, Of = loader.extract_fixtures_data()
+
+            library_fixture_rows = len(Xf)
+
+            # Filter only the data returned by the library.
+            Xf, Of = _filter_today_fixtures(Xf, Of)
+
             diagnostics.append(_diag(
-                stage, "Fixture extraction completed.", fixture_rows=len(Xf),
-                odds_rows=len(Of), feature_columns=list(map(str, Xf.columns)),
+                stage,
+                "Library fixtures filtered to today's not-yet-started matches in Europe/Budapest.",
+                library_fixture_rows=library_fixture_rows,
+                today_fixture_rows=len(Xf),
+                odds_rows=len(Of),
+                timezone="Europe/Budapest",
+                feature_columns=list(map(str, Xf.columns)),
                 odds_columns=list(map(str, Of.columns)),
                 sample=Xf.head(5).to_dict(orient="records") if not Xf.empty else []
             ))
-            if Xf.empty:
-                raise ValueError(
-                    "The fixture provider returned zero upcoming matches. "
-                    "Historical training data was loaded, but no fixtures were returned."
-                )
+
             if len(Xf) != len(Of):
-                raise ValueError(f"Fixture/odds rows are misaligned: X={len(Xf)}, O={len(Of)}.")
+                raise ValueError(
+                    f"Fixture/odds rows are misaligned after filtering: "
+                    f"X={len(Xf)}, O={len(Of)}."
+                )
 
         stage = "select_markets"
         markets = _choose_markets(Y, O)
@@ -260,11 +323,31 @@ def _run(payload, only_backtest=False):
         bt = _backtest_result(bettor, X, Y, O, payload.get("backtest_folds", 3))
         diagnostics.append(_diag(stage, "Backtest completed.", rows=bt["rows"],
                                  folds=len(bt["folds"])))
+
         if only_backtest:
             return {
                 "sport": sport, "data_source": _source_label(sport, source_mode),
                 "backtest": bt["folds"], "backtest_columns": bt["columns"],
                 "rows": bt["rows"], "note": bt["note"], "diagnostics": diagnostics
+            }
+
+        # No model fitting or prediction when there are no matches today.
+        if Xf.empty:
+            diagnostics.append(_diag(
+                "filter_selections",
+                "NO MATCHES TODAY: no not-yet-started fixtures were returned for today's Budapest date."
+            ))
+            return {
+                "sport": sport,
+                "data_source": _source_label(sport, source_mode),
+                "training_rows": int(len(X)),
+                "fixture_rows": 0,
+                "picks": [],
+                "backtest": bt["folds"],
+                "backtest_columns": bt["columns"],
+                "filtered_count": 0,
+                "diagnostics": diagnostics,
+                "notice": "NO MATCHES TODAY"
             }
 
         stage = "fit_model"
@@ -329,11 +412,17 @@ def _run(payload, only_backtest=False):
                 )
                 row = Xf.iloc[i]
                 picks.append({
-                    "date": _plain(Xf.index[i]), "league": _plain(row.get("league")),
-                    "home_team": _plain(row.get("home_team")), "away_team": _plain(row.get("away_team")),
-                    "market": label, "market_key": market, "probability": round(p, 4),
-                    "confidence": round(confidence, 4), "odds": round(odds, 3),
-                    "implied_probability": round(implied, 4), "edge": round(edge, 4),
+                    "date": _plain(Xf.index[i]),
+                    "league": _plain(row.get("league")),
+                    "home_team": _plain(row.get("home_team")),
+                    "away_team": _plain(row.get("away_team")),
+                    "market": label,
+                    "market_key": market,
+                    "probability": round(p, 4),
+                    "confidence": round(confidence, 4),
+                    "odds": round(odds, 3),
+                    "implied_probability": round(implied, 4),
+                    "edge": round(edge, 4),
                     "ev": round(ev, 4),
                     "model": "sports-betting ClassifierBettor + LogisticRegression",
                     "odds_source": odds_type
@@ -438,97 +527,4 @@ def source_test():
             }
 
     except Exception as exc:
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        app.logger.exception("Football-Data source diagnostic failed")
-
-    return jsonify(result)
-
-
-@app.get("/health")
-def health():
-    return jsonify({
-        "ok": True, "library": "georgedouzas/sports-betting",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
-
-
-def _start_job(payload, only_backtest=False):
-    if not RUN_LOCK.acquire(blocking=False):
-        return None, (jsonify({
-            "error": "Another model run is already in progress. Wait for it to finish."
-        }), 429)
-
-    job_id = uuid.uuid4().hex
-    with JOBS_LOCK:
-        JOBS[job_id] = {"status": "running", "result": None, "error": None}
-
-    def worker():
-        try:
-            result = _run(payload, only_backtest=only_backtest)
-            with JOBS_LOCK:
-                JOBS[job_id].update(status="complete", result=result)
-        except Exception as exc:
-            app.logger.exception("Background model job failed")
-            if isinstance(exc, ModelRunError):
-                info = exc.info
-                err = {
-                    "error": info["error"],
-                    "detail": f"Stage: {info['stage']} | Exception: {info['exception_type']}",
-                    "stage": info["stage"], "exception_type": info["exception_type"],
-                    "diagnostics": info["diagnostics"],
-                    "traceback": info["traceback"]
-                }
-            else:
-                err = {
-                    "error": str(exc), "detail": type(exc).__name__,
-                    "traceback": traceback.format_exc()
-                }
-            with JOBS_LOCK:
-                JOBS[job_id].update(status="error", error=err)
-        finally:
-            RUN_LOCK.release()
-
-    try:
-        threading.Thread(target=worker, name=f"sportsbet-{job_id[:8]}", daemon=True).start()
-    except Exception:
-        RUN_LOCK.release()
-        with JOBS_LOCK:
-            JOBS.pop(job_id, None)
-        raise
-    return job_id, None
-
-
-@app.post("/api/scan")
-def api_scan():
-    job_id, error_response = _start_job(request.get_json(silent=True) or {})
-    if error_response:
-        return error_response
-    return jsonify({"job_id": job_id, "status": "running"}), 202
-
-
-@app.post("/api/backtest")
-def api_backtest():
-    job_id, error_response = _start_job(
-        request.get_json(silent=True) or {}, only_backtest=True
-    )
-    if error_response:
-        return error_response
-    return jsonify({"job_id": job_id, "status": "running"}), 202
-
-
-@app.get("/api/jobs/<job_id>")
-def api_job_status(job_id):
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if job is None:
-            return jsonify({"error": "Job not found. Please start a new run."}), 404
-        response = {"job_id": job_id, "status": job["status"]}
-        if job["status"] == "complete":
-            response["result"] = job["result"]
-        elif job["status"] == "error":
-            response.update(job["error"] or {"error": "Unknown background job failure."})
-        return jsonify(response)
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+        result["error"] = f"{type(
