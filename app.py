@@ -524,11 +524,12 @@ def source_test():
                 "future_rows": int(
                     (parsed.dropna() >= pd.Timestamp.today().normalize()).sum()
                 )
-except Exception as exc:
-        result["error"] = f"{type(exc).__name__}: {exc}"
-        app.logger.exception("Football-Data source diagnostic failed")
+    except Exception as exc:
+     result["error"] = f"{type(exc).__name__}: {exc}"
+     app.logger.exception("Football-Data source diagnostic failed")
 
     return jsonify(result)
+
 
 
 @app.get("/health")
