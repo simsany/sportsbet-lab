@@ -524,7 +524,98 @@ def source_test():
                 "future_rows": int(
                     (parsed.dropna() >= pd.Timestamp.today().normalize()).sum()
                 )
-            }
+except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        app.logger.exception("Football-Data source diagnostic failed")
 
-    except Exception as exc:
-        result["error"] = f"{type(
+    return jsonify(result)
+
+
+@app.get("/health")
+def health():
+    return jsonify({
+        "ok": True, "library": "georgedouzas/sports-betting",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+
+def _start_job(payload, only_backtest=False):
+    if not RUN_LOCK.acquire(blocking=False):
+        return None, (jsonify({
+            "error": "Another model run is already in progress. Wait for it to finish."
+        }), 429)
+
+    job_id = uuid.uuid4().hex
+    with JOBS_LOCK:
+        JOBS[job_id] = {"status": "running", "result": None, "error": None}
+
+    def worker():
+        try:
+            result = _run(payload, only_backtest=only_backtest)
+            with JOBS_LOCK:
+                JOBS[job_id].update(status="complete", result=result)
+        except Exception as exc:
+            app.logger.exception("Background model job failed")
+            if isinstance(exc, ModelRunError):
+                info = exc.info
+                err = {
+                    "error": info["error"],
+                    "detail": f"Stage: {info['stage']} | Exception: {info['exception_type']}",
+                    "stage": info["stage"], "exception_type": info["exception_type"],
+                    "diagnostics": info["diagnostics"],
+                    "traceback": info["traceback"]
+                }
+            else:
+                err = {
+                    "error": str(exc), "detail": type(exc).__name__,
+                    "traceback": traceback.format_exc()
+                }
+            with JOBS_LOCK:
+                JOBS[job_id].update(status="error", error=err)
+        finally:
+            RUN_LOCK.release()
+
+    try:
+        threading.Thread(target=worker, name=f"sportsbet-{job_id[:8]}", daemon=True).start()
+    except Exception:
+        RUN_LOCK.release()
+        with JOBS_LOCK:
+            JOBS.pop(job_id, None)
+        raise
+    return job_id, None
+
+
+@app.post("/api/scan")
+def api_scan():
+    job_id, error_response = _start_job(request.get_json(silent=True) or {})
+    if error_response:
+        return error_response
+    return jsonify({"job_id": job_id, "status": "running"}), 202
+
+
+@app.post("/api/backtest")
+def api_backtest():
+    job_id, error_response = _start_job(
+        request.get_json(silent=True) or {}, only_backtest=True
+    )
+    if error_response:
+        return error_response
+    return jsonify({"job_id": job_id, "status": "running"}), 202
+
+
+@app.get("/api/jobs/<job_id>")
+def api_job_status(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "Job not found. Please start a new run."}), 404
+        response = {"job_id": job_id, "status": job["status"]}
+        if job["status"] == "complete":
+            response["result"] = job["result"]
+        elif job["status"] == "error":
+            response.update(job["error"] or {"error": "Unknown background job failure."})
+        return jsonify(response)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
