@@ -518,4 +518,17 @@ def api_backtest():
 
 @app.get("/api/jobs/<job_id>")
 def api_job_status(job_id):
-    w
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "Job not found. Please start a new run."}), 404
+        response = {"job_id": job_id, "status": job["status"]}
+        if job["status"] == "complete":
+            response["result"] = job["result"]
+        elif job["status"] == "error":
+            response.update(job["error"] or {"error": "Unknown background job failure."})
+        return jsonify(response)
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
