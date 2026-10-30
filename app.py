@@ -370,6 +370,89 @@ def index():
         "index.html", sports=SPORTS,
         odds_api_configured=bool(os.environ.get("ODDS_API_KEY"))
     )
+    @app.get("/api/source-test")
+def source_test():
+    import requests
+    import pandas as pd
+    from io import BytesIO
+
+    url = "https://www.football-data.co.uk/fixtures.csv"
+
+    result = {
+        "url": url,
+        "http_status": None,
+        "content_type": None,
+        "file_size": 0,
+        "columns": [],
+        "sample": [],
+        "date_formats": {},
+        "future_matches": {},
+        "error": None,
+    }
+
+    try:
+        response = requests.get(
+            url,
+            timeout=30,
+            headers={"User-Agent": "SportsBetLab/1.0"}
+        )
+
+        result["http_status"] = response.status_code
+        result["content_type"] = response.headers.get("Content-Type")
+        result["file_size"] = len(response.content)
+
+        response.raise_for_status()
+
+        df = pd.read_csv(
+            BytesIO(response.content),
+            encoding="ISO-8859-1"
+        )
+
+        result["columns"] = df.columns.tolist()
+
+        date_col = next(
+            (c for c in df.columns if c.strip().lower() == "date"),
+            None
+        )
+
+        if date_col is None:
+            raise ValueError(
+                f"Nem található Date oszlop. Kapott oszlopok: {df.columns.tolist()}"
+            )
+
+        result["sample"] = (
+            df.head(5)
+            .fillna("")
+            .to_dict(orient="records")
+        )
+
+        for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+            parsed = pd.to_datetime(
+                df[date_col],
+                format=fmt,
+                errors="coerce"
+            )
+
+            valid = int(parsed.notna().sum())
+            future = int(
+                (parsed.dropna() >= pd.Timestamp.today().normalize()).sum()
+            )
+
+            result["date_formats"][fmt] = {
+                "valid_rows": valid,
+                "invalid_rows": int(len(df) - valid),
+                "future_rows": future,
+            }
+
+        result["future_matches"] = {
+            fmt: values["future_rows"]
+            for fmt, values in result["date_formats"].items()
+        }
+
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+
+    return result
 
 
 @app.get("/health")
