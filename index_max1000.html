@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SportsBet Lab</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div>
+        <div class="eyebrow">MODEL WORKBENCH · OPEN SOURCE</div>
+        <h1>SportsBet <span>Lab</span></h1>
+        <p class="sub">Train, validate and inspect model-backed selections. No generated sample picks.</p>
+      </div>
+      <div class="status"><span class="dot"></span> Model-on-demand</div>
+    </header>
+
+    <section class="notice">
+      <strong>Free-data reality check</strong>
+      <p>Free mode uses real Football-Data statistics and historical odds. The library also supports NBA and EuroLeague statistics; to generate basketball picks or use the wider Odds API market feed, configure an Odds API key in Heroku Config Vars. Without real odds, the app returns an explanatory error rather than fabricated picks.</p>
+    </section>
+
+    <section class="layout">
+      <aside class="panel controls">
+        <div class="section-title"><span class="num">01</span><div><h2>Run configuration</h2><p>Every scan calls the real Python library.</p></div></div>
+
+        <label for="sport">Sport / competition</label>
+        <select id="sport">
+          <option value="football">Football / soccer</option>
+          <option value="nba">NBA basketball</option>
+          <option value="euroleague">EuroLeague basketball</option>
+        </select>
+
+        <label for="leagues">League(s)</label>
+        <select id="leagues" multiple size="7">
+          <option selected>England</option><option>Scotland</option><option>Germany</option><option>Italy</option><option>Spain</option><option>France</option><option>Netherlands</option><option>Belgium</option><option>Portugal</option><option>Turkey</option><option>Greece</option><option>Argentina</option><option>Austria</option><option>Brazil</option><option>China</option><option>Denmark</option><option>Finland</option><option>Ireland</option><option>Japan</option><option>Mexico</option><option>Norway</option><option>Poland</option><option>Romania</option><option>Russia</option><option>Sweden</option><option>Switzerland</option><option>USA</option>
+        </select>
+        <small>Use Ctrl/Cmd to select multiple leagues. Basketball uses its supported competition.</small>
+
+        <label for="sourceMode">Odds source</label>
+        <select id="sourceMode">
+          <option value="free">Free Football-Data source (football only)</option>
+          <option value="odds_api">The Odds API — requires API key</option>
+        </select>
+        <small>{% if odds_api_configured %}Odds API key detected in Heroku configuration.{% else %}No Odds API key detected. Free football mode is ready; basketball picks require a real odds feed.{% endif %}</small>
+
+        <label>Season years (ending year)</label>
+        <div class="checks">
+          <label class="check"><input type="checkbox" name="year" value="2023"> 2023</label>
+          <label class="check"><input type="checkbox" name="year" value="2024" checked> 2024</label>
+          <label class="check"><input type="checkbox" name="year" value="2025" checked> 2025</label>
+          <label class="check"><input type="checkbox" name="year" value="2026" checked> 2026</label>
+          <label class="check"><input type="checkbox" name="year" value="2027" checked> 2027</label>
+        </div>
+
+        <div class="rule"></div>
+        <div class="section-title compact"><span class="num">02</span><div><h2>Selection filters</h2><p>Applied to actual model outputs.</p></div></div>
+
+        <div class="field-row"><label for="minProbability">Minimum probability</label><output id="probOut">60%</output></div>
+        <input id="minProbability" type="range" min="30" max="95" value="60" step="1">
+
+        <div class="field-row"><label for="minConfidence">Minimum confidence</label><output id="confOut">0%</output></div>
+        <input id="minConfidence" type="range" min="0" max="40" value="0" step="1">
+        <small>Confidence = top predicted outcome probability minus the second-highest outcome probability. It is a margin, not a separately calibrated confidence score.</small>
+
+        <div class="field-row"><label for="minEdge">Minimum edge</label><output id="edgeOut">2%</output></div>
+        <input id="minEdge" type="range" min="-5" max="20" value="2" step="0.5">
+
+        <div class="field-row"><label for="minEv">Minimum expected value</label><output id="evOut">0%</output></div>
+        <input id="minEv" type="range" min="-20" max="30" value="0" step="1">
+
+        <div class="two">
+          <div><label for="minOdds">Minimum decimal odds</label><input id="minOdds" type="number" min="1.01" max="100" step="0.01" value="1.30"></div>
+          <div><label for="maxOdds">Maximum decimal odds</label><input id="maxOdds" type="number" min="1.01" max="1000" step="0.1" value="8.0"></div>
+        </div>
+
+        <div><label for="maxPicks">Maximum picks</label><select id="maxPicks"><option>5</option><option>10</option><option>20</option><option>50</option><option>100</option><option>250</option><option>500</option><option selected>1000</option></select></div>
+
+        <div class="two">
+          <div><label for="folds">Walk-forward folds</label><select id="folds"><option>2</option><option selected>3</option><option>4</option><option>5</option></select></div>
+          <div><label for="oddsType">Odds type</label><input id="oddsType" value="Market maximum / API" disabled></div>
+        </div>
+
+        <button id="scanBtn" class="primary">Run model &amp; scan</button>
+        <button id="backtestBtn" class="secondary">Run backtest only</button>
+        <p class="footnote">Runs may take several minutes on a free Heroku dyno. No automated bet execution is included.</p>
+      </aside>
+
+      <section class="results">
+        <div class="panel hero-result">
+          <div class="section-title"><span class="num">03</span><div><h2>Analysis results</h2><p id="runStatus">Waiting for a real model run.</p></div></div>
+          <div class="metrics">
+            <div class="metric"><span>Training rows</span><strong id="trainingRows">—</strong></div>
+            <div class="metric"><span>Fixtures scanned</span><strong id="fixtureRows">—</strong></div>
+            <div class="metric"><span>Filtered selections</span><strong id="pickCount">—</strong></div>
+          </div>
+          <div id="errorBox" class="error hidden" role="alert"></div>
+          <div id="noticeBox" class="small-notice hidden"></div>
+        </div>
+
+        <div class="panel">
+          <div class="table-head"><div><h2>Qualified selections</h2><p>Sorted by estimated probability, then edge and EV.</p></div><span class="pill">1 market / match</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Kick-off</th><th>Match</th><th>Market</th><th>Probability</th><th>Confidence</th><th>Odds</th><th>Edge</th><th>EV</th></tr></thead>
+              <tbody id="picksBody"><tr><td colspan="8" class="empty">No results yet. Run a scan to request source data.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="table-head"><div><h2>Walk-forward backtest</h2><p>Historical folds generated by sports-betting.</p></div></div>
+          <div class="table-wrap">
+            <table><thead id="btHead"></thead><tbody id="btBody"><tr><td class="empty">Backtest results appear after a successful run.</td></tr></tbody></table>
+          </div>
+        </div>
+
+        <footer>Powered by <a href="https://github.com/georgedouzas/sports-betting" target="_blank" rel="noreferrer">georgedouzas/sports-betting</a>. Predictions are estimates, not guarantees.</footer>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const pct = v => `${(Number(v) * 100).toFixed(1)}%`;
+
+    ["minProbability","minConfidence","minEdge","minEv"].forEach(id =>
+      $(id).addEventListener("input", () => {
+        const target = {
+          minProbability:"probOut",
+          minConfidence:"confOut",
+          minEdge:"edgeOut",
+          minEv:"evOut"
+        }[id];
+        $(target).textContent =
+          `${Number($(id).value).toFixed(($(id).value % 1) ? 1 : 0)}%`;
+      })
+    );
+
+    const leagueOptions = {
+      football: ["England","Scotland","Germany","Italy","Spain","France","Netherlands","Belgium","Portugal","Turkey","Greece","Argentina","Austria","Brazil","China","Denmark","Finland","Ireland","Japan","Mexico","Norway","Poland","Romania","Russia","Sweden","Switzerland","USA"],
+      nba: ["NBA"],
+      euroleague: ["Euroleague"]
+    };
+
+    function updateLeagueOptions() {
+      const sport = $("sport").value;
+      const old = [...$("leagues").selectedOptions].map(o => o.value);
+      $("leagues").innerHTML = leagueOptions[sport]
+        .map(v => `<option value="${esc(v)}">${esc(v)}</option>`)
+        .join("");
+
+      [...$("leagues").options].forEach(o => {
+        o.selected = old.includes(o.value);
+      });
+      if (!$("leagues").selectedOptions.length && $("leagues").options.length) {
+        $("leagues").options[0].selected = true;
+      }
+
+      $("leagues").disabled = sport !== "football";
+      if (sport !== "football") $("sourceMode").value = "odds_api";
+      $("scanBtn").textContent = sport === "football"
+        ? "Run model & scan"
+        : "Run model & scan (odds API)";
+    }
+
+    $("sport").addEventListener("change", updateLeagueOptions);
+    $("sourceMode").addEventListener("change", () => {
+      if ($("sourceMode").value === "free" && $("sport").value !== "football") {
+        $("sourceMode").value = "odds_api";
+      }
+    });
+
+    function payload() {
+      const years = [...document.querySelectorAll('input[name="year"]:checked')]
+        .map(x => Number(x.value));
+      const leagues = [...$("leagues").selectedOptions].map(x => x.value);
+      return {
+        sport: $("sport").value,
+        source_mode: $("sourceMode").value,
+        leagues,
+        years,
+        min_probability: Number($("minProbability").value) / 100,
+        min_confidence: Number($("minConfidence").value),
+        min_edge: Number($("minEdge").value),
+        min_ev: Number($("minEv").value),
+        min_odds: Number($("minOdds").value),
+        max_odds: Number($("maxOdds").value),
+        max_picks: Number($("maxPicks").value),
+        backtest_folds: Number($("folds").value)
+      };
+    }
+
+    function showError(message, detail = "") {
+      const box = $("errorBox");
+      box.classList.remove("hidden");
+      box.style.whiteSpace = "pre-wrap";
+      box.style.overflowWrap = "anywhere";
+      box.style.maxHeight = "520px";
+      box.style.overflowY = "auto";
+      box.textContent = detail ? `${message}\n\n${detail}` : message;
+      $("runStatus").textContent = "Run did not complete. Technical details are shown above.";
+    }
+
+    function hideError() {
+      $("errorBox").classList.add("hidden");
+      $("errorBox").textContent = "";
+    }
+
+    function renderBacktest(data) {
+      const rows = data.backtest || data.folds || [];
+      const columns = data.backtest_columns || data.columns ||
+        (rows[0] ? Object.keys(rows[0]) : []);
+
+      $("btHead").innerHTML =
+        `<tr>${columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr>`;
+      $("btBody").innerHTML = rows.length
+        ? rows.map(row =>
+            `<tr>${columns.map(c => `<td>${formatCell(row[c])}</td>`).join("")}</tr>`
+          ).join("")
+        : `<tr><td class="empty" colspan="${Math.max(columns.length, 1)}">No folds returned.</td></tr>`;
+    }
+
+    function formatCell(v) {
+      if (v === null || v === undefined) return "—";
+      if (typeof v === "number") return Number.isInteger(v) ? v : v.toFixed(3);
+      return esc(String(v));
+    }
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[c]));
+    }
+
+    function errorDetails(statusData) {
+      const parts = [];
+
+      if (statusData.stage) {
+        parts.push(`Stage: ${statusData.stage}`);
+      }
+
+      if (statusData.exception_type) {
+        parts.push(`Exception: ${statusData.exception_type}`);
+      }
+
+      if (statusData.detail) {
+        parts.push(statusData.detail);
+      }
+
+      if (statusData.diagnostics) {
+        parts.push(
+          "Diagnostics:\n" +
+          (typeof statusData.diagnostics === "string"
+            ? statusData.diagnostics
+            : JSON.stringify(statusData.diagnostics, null, 2))
+        );
+      }
+
+      if (statusData.traceback) {
+        parts.push("Full traceback:\n" + statusData.traceback);
+      }
+
+      return parts.join("\n\n");
+    }
+
+    async function run(kind) {
+      hideError();
+      $("scanBtn").disabled = $("backtestBtn").disabled = true;
+      $("runStatus").textContent = "Starting background model run…";
+      $("picksBody").innerHTML =
+        `<tr><td colspan="8" class="empty">Working… this may take a few minutes.</td></tr>`;
+
+      try {
+        const response = await fetch(
+          kind === "scan" ? "/api/scan" : "/api/backtest",
+          {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload())
+          }
+        );
+
+        const startText = await response.text();
+        let startData;
+
+        try {
+          startData = JSON.parse(startText);
+        } catch {
+          throw new Error(
+            `The server returned a non-JSON response (HTTP ${response.status}). Response: ${startText.slice(0, 2000)}`
+          );
+        }
+
+        if (!response.ok || startData.error) {
+          throw new Error(
+            `${startData.error || "Could not start the run."} ${startData.detail || ""}`
+          );
+        }
+
+        if (!startData.job_id) {
+          throw new Error("The server did not return a background job ID.");
+        }
+
+        let data;
+        const startedAt = Date.now();
+
+        while (Date.now() - startedAt < 15 * 60 * 1000) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+
+          const statusResponse = await fetch(
+            `/api/jobs/${encodeURIComponent(startData.job_id)}`,
+            {cache: "no-store"}
+          );
+
+          const statusText = await statusResponse.text();
+          let statusData;
+
+          try {
+            statusData = JSON.parse(statusText);
+          } catch {
+            throw new Error(
+              `Could not read job status (HTTP ${statusResponse.status}). Response: ${statusText.slice(0, 2000)}`
+            );
+          }
+
+          if (!statusResponse.ok) {
+            throw new Error(
+              `${statusData.error || "Could not read job status."} ${statusData.detail || ""}`
+            );
+          }
+
+          if (statusData.status === "complete") {
+            data = statusData.result;
+            break;
+          }
+
+          if (statusData.status === "error") {
+            throw new Error(
+              `${statusData.error || "Model run failed."}\n\n${errorDetails(statusData)}`
+            );
+          }
+
+          $("runStatus").textContent = kind === "backtest"
+            ? "Backtest running on the server…"
+            : "Model scan running on the server…";
+        }
+
+        if (!data) {
+          throw new Error(
+            "The run did not finish within 15 minutes. The server may have timed out or restarted."
+          );
+        }
+
+        if (kind === "backtest") {
+          renderBacktest(data);
+          $("runStatus").textContent =
+            `Backtest complete · ${data.rows ?? "—"} rows`;
+          $("noticeBox").classList.remove("hidden");
+          $("noticeBox").textContent =
+            data.note || "Walk-forward backtest completed.";
+          $("picksBody").innerHTML =
+            `<tr><td colspan="8" class="empty">Backtest-only run; no fixture picks requested.</td></tr>`;
+        } else {
+          $("trainingRows").textContent = data.training_rows ?? "—";
+          $("fixtureRows").textContent = data.fixture_rows ?? "—";
+          $("pickCount").textContent = data.picks?.length ?? 0;
+          $("runStatus").textContent =
+            `Scan complete · ${data.data_source || data.sport}`;
+          $("noticeBox").classList.remove("hidden");
+          $("noticeBox").textContent = data.notice || "";
+
+          const picks = data.picks || [];
+
+          $("picksBody").innerHTML = picks.length
+            ? picks.map(p => `<tr>
+                <td>${esc(p.date || "—")}</td>
+                <td>
+                  <strong>${esc(p.home_team || "—")}</strong><br>
+                  <span class="muted">vs ${esc(p.away_team || "—")}</span><br>
+                  <small>${esc(p.league || "")}</small>
+                </td>
+                <td>${esc(p.market)}</td>
+                <td><strong>${pct(p.probability)}</strong></td>
+                <td>${pct(p.confidence)}</td>
+                <td>${Number(p.odds).toFixed(2)}</td>
+                <td class="${p.edge >= 0 ? "positive" : "negative"}">${pct(p.edge)}</td>
+                <td class="${p.ev >= 0 ? "positive" : "negative"}">${pct(p.ev)}</td>
+              </tr>`).join("")
+            : `<tr><td colspan="8" class="empty">The real model returned no selections that passed all filters. Try relaxing filters or changing leagues/seasons.</td></tr>`;
+
+          renderBacktest({
+            backtest: data.backtest || [],
+            backtest_columns: data.backtest_columns || []
+          });
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+        $("picksBody").innerHTML =
+          `<tr><td colspan="8" class="empty">No picks displayed because the model/data run did not complete successfully.</td></tr>`;
+      } finally {
+        $("scanBtn").disabled = $("backtestBtn").disabled = false;
+      }
+    }
+
+    $("scanBtn").addEventListener("click", () => run("scan"));
+    $("backtestBtn").addEventListener("click", () => run("backtest"));
+  </script>
+</body>
+</html>
