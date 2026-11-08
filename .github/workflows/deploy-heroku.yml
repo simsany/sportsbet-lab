@@ -11,11 +11,13 @@ permissions:
 
 concurrency:
   group: heroku-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -29,19 +31,54 @@ jobs:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: heroku container:login
 
-      - name: Build and push Docker image
+      - name: Validate Heroku app setting
         env:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
         run: |
-          test -n "$HEROKU_APP_NAME" || {
-            echo "Missing GitHub Actions variable HEROKU_APP_NAME"
+          if [ -z "$HEROKU_APP_NAME" ]; then
+            echo "::error::GitHub Actions variable HEROKU_APP_NAME is missing."
             exit 1
-          }
-          docker build --pull -t "registry.heroku.com/${HEROKU_APP_NAME}/web" .
-          docker push "registry.heroku.com/${HEROKU_APP_NAME}/web"
+          fi
+          echo "Deploy target: $HEROKU_APP_NAME"
+
+      - name: Build Docker image
+        env:
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        run: |
+          docker build --pull \
+            --tag "registry.heroku.com/${HEROKU_APP_NAME}/web" \
+            .
+
+      - name: Push image with retries
+        env:
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web"
+          MAX_ATTEMPTS=6
+
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            echo "Docker push attempt ${attempt}/${MAX_ATTEMPTS}"
+
+            if docker push "$IMAGE"; then
+              echo "Docker image pushed successfully."
+              exit 0
+            fi
+
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              delay=$((attempt * 20))
+              echo "Push failed. Retrying in ${delay} seconds..."
+              sleep "$delay"
+            fi
+          done
+
+          echo "::error::Docker push failed after ${MAX_ATTEMPTS} attempts."
+          exit 1
 
       - name: Release web container
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
-        run: heroku container:release web --app "$HEROKU_APP_NAME"
+        run: |
+          heroku container:release web --app "$HEROKU_APP_NAME"
