@@ -26,28 +26,46 @@ jobs:
         run: |
           curl https://cli-assets.heroku.com/install.sh | sh
 
+      - name: Validate Heroku configuration
+        env:
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          if [ -z "$HEROKU_APP_NAME" ]; then
+            echo "::error::Missing HEROKU_APP_NAME repository variable."
+            exit 1
+          fi
+
+          if [ -z "$HEROKU_API_KEY" ]; then
+            echo "::error::Missing HEROKU_API_KEY repository secret."
+            exit 1
+          fi
+
+          echo "Target Heroku app: $HEROKU_APP_NAME"
+
       - name: Log in to Heroku Container Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: heroku container:login
 
-      - name: Validate Heroku app setting
-        env:
-          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
-        run: |
-          if [ -z "$HEROKU_APP_NAME" ]; then
-            echo "::error::GitHub Actions variable HEROKU_APP_NAME is missing."
-            exit 1
-          fi
-          echo "Deploy target: $HEROKU_APP_NAME"
-
       - name: Build Docker image
         env:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+          DOCKER_BUILDKIT: "0"
         run: |
-          docker build --pull \
+          docker build \
+            --pull \
+            --platform linux/amd64 \
             --tag "registry.heroku.com/${HEROKU_APP_NAME}/web" \
             .
+
+      - name: Show image information
+        env:
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        run: |
+          docker image inspect \
+            "registry.heroku.com/${HEROKU_APP_NAME}/web" \
+            --format='Architecture: {{.Architecture}}, OS: {{.Os}}, Size: {{.Size}} bytes'
 
       - name: Push image with retries
         env:
@@ -55,6 +73,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
           IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web"
           MAX_ATTEMPTS=6
 
@@ -67,7 +86,7 @@ jobs:
             fi
 
             if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-              delay=$((attempt * 20))
+              delay=$((attempt * 30))
               echo "Push failed. Retrying in ${delay} seconds..."
               sleep "$delay"
             fi
