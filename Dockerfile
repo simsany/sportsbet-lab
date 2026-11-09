@@ -10,11 +10,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 ARG PROPHITBET_COMMIT=49fa5ff14783af5dbbac7919ec743ab41628fcac
 
-# --------------------------------------------------
 # SYSTEM DEPENDENCIES
-# --------------------------------------------------
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     git \
     xvfb \
     x11vnc \
@@ -55,10 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon-x11-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# --------------------------------------------------
 # ORIGINAL PROPHITBET SOURCE
-# --------------------------------------------------
-
 RUN git clone \
     https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor.git \
     /opt/prophitbet \
@@ -68,17 +63,11 @@ RUN git clone \
 
 WORKDIR /opt/prophitbet
 
-# --------------------------------------------------
 # PYTHON TOOLING
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     --upgrade pip setuptools wheel
 
-# --------------------------------------------------
 # GUI AND DATA PROCESSING
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     PySide6==6.11.2 \
     numpy==1.26.4 \
@@ -92,10 +81,7 @@ RUN python -m pip install --no-cache-dir --no-compile \
     fuzzywuzzy==0.18.0 \
     python-Levenshtein==0.27.3
 
-# --------------------------------------------------
 # VISUALIZATION
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     matplotlib==3.11.1 \
     seaborn==0.13.2 \
@@ -104,10 +90,7 @@ RUN python -m pip install --no-cache-dir --no-compile \
     dtreeviz==2.3.2 \
     graphviz==0.21
 
-# --------------------------------------------------
 # MACHINE LEARNING
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     scikit-learn==1.9.0 \
     imbalanced-learn==0.14.2 \
@@ -116,19 +99,13 @@ RUN python -m pip install --no-cache-dir --no-compile \
     tensorflow==2.15.1 \
     shap==0.49.1
 
-# --------------------------------------------------
 # OPTIMIZATION AND DATABASE
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     optuna==4.9.0 \
     optuna-dashboard==0.20.0 \
     SQLAlchemy==2.0.51
 
-# --------------------------------------------------
 # PYTORCH RUNTIME DEPENDENCIES
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     filelock \
     typing-extensions \
@@ -137,39 +114,26 @@ RUN python -m pip install --no-cache-dir --no-compile \
     jinja2 \
     fsspec
 
-# --------------------------------------------------
 # CPU-ONLY PYTORCH
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     --no-deps \
     --index-url https://download.pytorch.org/whl/cpu \
     torch==2.13.0
 
-# --------------------------------------------------
 # REINFORCEMENT LEARNING
-# --------------------------------------------------
-
 RUN python -m pip install --no-cache-dir --no-compile \
     gymnasium==1.3.0 \
     stable-baselines3==2.9.0 \
     sb3-contrib==2.9.0
 
-# --------------------------------------------------
-# VERIFY PYTHON AND PYTORCH
-# --------------------------------------------------
-
+# VERIFY PYTORCH
 RUN python -c "\
 import torch; \
 print('PyTorch:', torch.__version__); \
 print('CUDA available:', torch.cuda.is_available())"
 
-# --------------------------------------------------
 # VERIFY QT / XCB PLUGIN DEPENDENCIES
-# --------------------------------------------------
-
 RUN python - <<'PY'
-import os
 import subprocess
 from pathlib import Path
 from PySide6.QtCore import QLibraryInfo
@@ -203,14 +167,11 @@ if "not found" in result.stdout:
 print("Qt XCB dependencies verified successfully")
 PY
 
-# --------------------------------------------------
 # ENTRYPOINT
-# --------------------------------------------------
-
 COPY deploy/entrypoint.sh /opt/deploy/entrypoint.sh
 
 RUN chmod +x /opt/deploy/entrypoint.sh
 
 EXPOSE 8080
 
-CMD ["/opt/deploy/entrypoint.sh"]
+CMD ["/bin/bash", "/opt/deploy/entrypoint.sh"]
