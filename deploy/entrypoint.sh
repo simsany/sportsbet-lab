@@ -1,12 +1,8 @@
-
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
 
-# ==================================================
 # CONFIGURATION
-# ==================================================
-
 export PORT="${PORT:-8080}"
 export DISPLAY="${DISPLAY:-:99}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
@@ -28,16 +24,10 @@ echo "PORT=$PORT"
 echo "DISPLAY=$DISPLAY"
 echo "QT_QPA_PLATFORM=$QT_QPA_PLATFORM"
 
-# ==================================================
 # DIRECTORIES
-# ==================================================
-
 mkdir -p /tmp/prophitbet
 
-# ==================================================
 # PROCESS VARIABLES
-# ==================================================
-
 XVFB_PID=""
 VNC_PID=""
 WEBSOCKIFY_PID=""
@@ -45,10 +35,7 @@ APP_PID=""
 
 CLEANUP_DONE=false
 
-# ==================================================
 # CLEANUP
-# ==================================================
-
 cleanup() {
     if [ "$CLEANUP_DONE" = true ]; then
         return
@@ -87,10 +74,7 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
-# ==================================================
 # VNC PASSWORD
-# ==================================================
-
 echo "Configuring VNC password..."
 
 x11vnc -storepasswd \
@@ -99,10 +83,7 @@ x11vnc -storepasswd \
 
 chmod 600 /tmp/prophitbet/vnc.pass
 
-# ==================================================
 # START XVFB
-# ==================================================
-
 echo "Starting Xvfb..."
 
 Xvfb "$DISPLAY" \
@@ -117,10 +98,7 @@ XVFB_PID=$!
 
 echo "Xvfb PID: $XVFB_PID"
 
-# ==================================================
 # WAIT FOR XVFB
-# ==================================================
-
 echo "Waiting for Xvfb..."
 
 XVFB_READY=false
@@ -149,10 +127,7 @@ fi
 
 echo "Xvfb started successfully."
 
-# ==================================================
 # VERIFY QT / XCB
-# ==================================================
-
 echo "Testing Qt XCB initialization..."
 
 python - <<'PY'
@@ -180,10 +155,7 @@ PY
 
 echo "Qt verification completed."
 
-# ==================================================
 # START X11VNC
-# ==================================================
-
 echo "Starting X11VNC..."
 
 x11vnc \
@@ -209,10 +181,7 @@ fi
 
 echo "X11VNC started successfully."
 
-# ==================================================
 # START NOVNC / WEBSOCKIFY
-# ==================================================
-
 echo "Starting noVNC..."
 
 if [ ! -d /usr/share/novnc ]; then
@@ -239,19 +208,13 @@ fi
 
 echo "noVNC started successfully."
 
-# ==================================================
 # VERIFY ORIGINAL APPLICATION
-# ==================================================
-
 if [ ! -f /opt/prophitbet/main.py ]; then
     echo "ERROR: main.py not found."
     exit 1
 fi
 
-# ==================================================
 # START PROPHITBET
-# ==================================================
-
 echo "=========================================="
 echo "Starting original ProphitBet GUI"
 echo "=========================================="
@@ -265,10 +228,7 @@ APP_PID=$!
 echo "Application PID: $APP_PID"
 echo "Web interface port: $PORT"
 
-# ==================================================
 # MONITOR PROCESSES
-# ==================================================
-
 echo "Monitoring application processes..."
 
 set +e
