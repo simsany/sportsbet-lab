@@ -1,3 +1,4 @@
+
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 ARG PROPHITBET_COMMIT=49fa5ff14783af5dbbac7919ec743ab41628fcac
 
-# Rendszerfüggőségek
+# System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     xvfb \
@@ -41,8 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Eredeti ProphitBet forrás letöltése
-# A Git metaadatokat nem tartjuk meg a végleges image-ben.
+# Clone original ProphitBet source
 RUN git clone https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor.git /opt/prophitbet \
     && cd /opt/prophitbet \
     && git checkout "$PROPHITBET_COMMIT" \
@@ -50,11 +50,11 @@ RUN git clone https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor.git
 
 WORKDIR /opt/prophitbet
 
-# Python csomagtelepítő
+# Upgrade pip tooling
 RUN python -m pip install --no-cache-dir --no-compile \
     --upgrade pip setuptools wheel
 
-# 1. GUI és adatelemzési alapcsomagok
+# 1. GUI and data processing
 RUN python -m pip install --no-cache-dir --no-compile \
     PySide6==6.11.2 \
     numpy==1.26.4 \
@@ -68,7 +68,7 @@ RUN python -m pip install --no-cache-dir --no-compile \
     fuzzywuzzy==0.18.0 \
     python-Levenshtein==0.27.3
 
-# 2. Vizualizáció
+# 2. Visualization
 RUN python -m pip install --no-cache-dir --no-compile \
     matplotlib==3.11.1 \
     seaborn==0.13.2 \
@@ -77,7 +77,7 @@ RUN python -m pip install --no-cache-dir --no-compile \
     dtreeviz==2.3.2 \
     graphviz==0.21
 
-# 3. Gépi tanulási csomagok
+# 3. Machine learning
 RUN python -m pip install --no-cache-dir --no-compile \
     scikit-learn==1.9.0 \
     imbalanced-learn==0.14.2 \
@@ -86,20 +86,38 @@ RUN python -m pip install --no-cache-dir --no-compile \
     tensorflow==2.15.1 \
     shap==0.49.1
 
-# 4. Optimalizáció és adatbázis
+# 4. Optimization and database
 RUN python -m pip install --no-cache-dir --no-compile \
     optuna==4.9.0 \
     optuna-dashboard==0.20.0 \
     SQLAlchemy==2.0.51
 
-# 5. Reinforcement learning
+# 5. Install PyTorch runtime dependencies from PyPI
 RUN python -m pip install --no-cache-dir --no-compile \
-    torch==2.13.0 \
+    filelock \
+    typing-extensions \
+    sympy \
+    networkx \
+    jinja2 \
+    fsspec
+
+# 6. CPU-only PyTorch
+# Prevent installation of CUDA/NVIDIA packages
+RUN python -m pip install --no-cache-dir --no-compile \
+    --no-deps \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.13.0
+
+# 7. Reinforcement learning
+RUN python -m pip install --no-cache-dir --no-compile \
     gymnasium==1.3.0 \
     stable-baselines3==2.9.0 \
     sb3-contrib==2.9.0
 
-# Indítószkript
+# Verify CPU-only PyTorch installation
+RUN python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available())"
+
+# Entrypoint
 COPY deploy/entrypoint.sh /opt/deploy/entrypoint.sh
 
 RUN chmod +x /opt/deploy/entrypoint.sh
