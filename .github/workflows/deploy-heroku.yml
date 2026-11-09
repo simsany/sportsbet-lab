@@ -62,7 +62,7 @@ jobs:
           docker build \
             --pull \
             --platform linux/amd64 \
-            --tag "registry.heroku.com/${HEROKU_APP_NAME}/web" \
+            --tag "registry.heroku.com/${HEROKU_APP_NAME}/web:latest" \
             .
 
       - name: Show image information
@@ -70,7 +70,7 @@ jobs:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
         run: |
           docker image inspect \
-            "registry.heroku.com/${HEROKU_APP_NAME}/web" \
+            "registry.heroku.com/${HEROKU_APP_NAME}/web:latest" \
             --format='Architecture: {{.Architecture}}, OS: {{.Os}}, Size: {{.Size}} bytes'
 
       - name: Push image using Skopeo
@@ -78,7 +78,7 @@ jobs:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
-          IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web"
+          IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web:latest"
 
           skopeo copy \
             --retry-times 3 \
