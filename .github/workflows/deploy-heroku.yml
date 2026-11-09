@@ -1,3 +1,4 @@
+
 name: Deploy ProphitBet to Heroku
 
 on:
@@ -42,6 +43,14 @@ jobs:
           fi
 
           echo "Target Heroku app: $HEROKU_APP_NAME"
+
+      - name: Set Heroku container stack
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        run: |
+          heroku stack:set container --app "$HEROKU_APP_NAME"
+          heroku stack --app "$HEROKU_APP_NAME"
 
       - name: Log in to Heroku Container Registry
         env:
