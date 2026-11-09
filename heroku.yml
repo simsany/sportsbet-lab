@@ -3,4 +3,4 @@ build:
     web: Dockerfile
 
 run:
-  web: /opt/deploy/entrypoint.sh
+  web: /bin/bash /opt/deploy/entrypoint.sh
