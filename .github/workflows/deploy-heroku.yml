@@ -46,7 +46,13 @@ jobs:
       - name: Log in to Heroku Container Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-        run: heroku container:login
+        run: |
+          heroku container:login
+
+      - name: Install Skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
 
       - name: Build Docker image
         env:
@@ -67,33 +73,20 @@ jobs:
             "registry.heroku.com/${HEROKU_APP_NAME}/web" \
             --format='Architecture: {{.Architecture}}, OS: {{.Os}}, Size: {{.Size}} bytes'
 
-      - name: Push image with retries
+      - name: Push image using Skopeo
         env:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
-        shell: bash
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
-          set -Eeuo pipefail
-
           IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web"
-          MAX_ATTEMPTS=6
 
-          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
-            echo "Docker push attempt ${attempt}/${MAX_ATTEMPTS}"
-
-            if docker push "$IMAGE"; then
-              echo "Docker image pushed successfully."
-              exit 0
-            fi
-
-            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
-              delay=$((attempt * 30))
-              echo "Push failed. Retrying in ${delay} seconds..."
-              sleep "$delay"
-            fi
-          done
-
-          echo "::error::Docker push failed after ${MAX_ATTEMPTS} attempts."
-          exit 1
+          skopeo copy \
+            --retry-times 3 \
+            --format v2s2 \
+            --dest-compress-format gzip \
+            --dest-creds "_:${HEROKU_API_KEY}" \
+            "docker-daemon:${IMAGE}" \
+            "docker://${IMAGE}"
 
       - name: Release web container
         env:
