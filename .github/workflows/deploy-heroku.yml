@@ -73,6 +73,13 @@ jobs:
             "registry.heroku.com/${HEROKU_APP_NAME}/web:latest" \
             --format='Architecture: {{.Architecture}}, OS: {{.Os}}, Size: {{.Size}} bytes'
 
+      - name: Show Docker image layers
+        env:
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        run: |
+          docker history --human --no-trunc \
+            "registry.heroku.com/${HEROKU_APP_NAME}/web:latest"
+
       - name: Push image using Skopeo
         env:
           HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
