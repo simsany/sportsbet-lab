@@ -1,6 +1,0 @@
-build:
-  docker:
-    web: Dockerfile
-
-run:
-  web: /bin/bash /opt/deploy/entrypoint.sh
