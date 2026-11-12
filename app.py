@@ -119,18 +119,35 @@ def create_league():
     missing = [x for x in required if not data.get(x)]
     if missing:
         return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
-    # Validate against the original ProphitBet feature names. Football match
-    # columns such as HS/AS/HST/AST are raw source fields, not StatisticsEngine keys.
-    supported_stats = set(StatisticsEngine().stats_columns)
-    requested_stats = list(data["stats_columns"])
-    invalid_stats = sorted(set(requested_stats) - supported_stats)
+    # Validate and normalize before saving a recovery recipe or downloading.
+    # HS/AS/HST/AST are raw match columns, not StatisticsEngine feature keys.
+    raw_stats = data.get("stats_columns")
+    if isinstance(raw_stats, str):
+        requested_stats = [part.strip() for part in raw_stats.replace(";", ",").split(",") if part.strip()]
+    elif isinstance(raw_stats, (list, tuple)):
+        requested_stats = [str(part).strip() for part in raw_stats if str(part).strip()]
+    else:
+        return jsonify({"error": "stats_columns must be a list of ProphitBet feature names."}), 400
+
+    if not requested_stats:
+        return jsonify({"error": "Select at least one supported ProphitBet feature."}), 400
+
+    # Preserve order while removing duplicates.
+    requested_stats = list(dict.fromkeys(requested_stats))
+    supported_stats = {str(name).strip() for name in StatisticsEngine().stats_columns}
+    invalid_stats = [name for name in requested_stats if name not in supported_stats]
     if invalid_stats:
         return jsonify({
             "error": (
                 f"Unsupported statistics: {', '.join(invalid_stats)}. "
-                f"Supported values include: {', '.join(sorted(supported_stats))}"
-            )
+                "HS, AS, HST and AST are raw match columns, not model features. "
+                f"Supported values: {', '.join(sorted(supported_stats))}"
+            ),
+            "invalid_stats": invalid_stats,
+            "supported_stats": sorted(supported_stats),
         }), 400
+
+    data["stats_columns"] = requested_stats
 
     with persistent_storage():
         db = _league_db()
