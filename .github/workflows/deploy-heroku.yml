@@ -1,3 +1,4 @@
+
 name: Deploy ProphitBet Web to Heroku
 
 on:
@@ -18,6 +19,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,27 +29,44 @@ jobs:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
-          test -n "$HEROKU_API_KEY" || { echo "::error::Missing HEROKU_API_KEY GitHub secret"; exit 1; }
-          test -n "$HEROKU_APP_NAME" || { echo "::error::Missing HEROKU_APP_NAME GitHub secret"; exit 1; }
+          test -n "$HEROKU_API_KEY" || {
+            echo "::error::Missing HEROKU_API_KEY GitHub secret"
+            exit 1
+          }
+          test -n "$HEROKU_APP_NAME" || {
+            echo "::error::Missing HEROKU_APP_NAME GitHub secret"
+            exit 1
+          }
 
       - name: Login to Heroku Container Registry
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
         run: |
-          echo "$HEROKU_API_KEY" | docker login --username=_ --password-stdin registry.heroku.com
+          echo "$HEROKU_API_KEY" | docker login \
+            --username=_ \
+            --password-stdin \
+            registry.heroku.com
 
-      - name: Build and push web image
+      - name: Build and push single-platform image
         env:
           HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
           IMAGE="registry.heroku.com/${HEROKU_APP_NAME}/web"
-          docker build --pull -t "$IMAGE" .
-          docker push "$IMAGE"
+
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --push \
+            --tag "$IMAGE" .
 
       - name: Release web process
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
-          curl --fail --silent --show-error https://cli-assets.heroku.com/install.sh | sh
-          heroku container:release web --app "$HEROKU_APP_NAME"
+          curl --fail --silent --show-error \
+            https://cli-assets.heroku.com/install.sh | sh
+
+          heroku container:release web \
+            --app "$HEROKU_APP_NAME"
