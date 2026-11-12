@@ -18,6 +18,7 @@ from src.core.models.classifiers import LogisticRegressor, RandomForest
 from src.core.models.model import ModelConfig
 from src.core.models.trainer import Trainer
 from src.core.preprocessing.filters import filter_league_odds
+from src.core.preprocessing.statistics import StatisticsEngine
 from src.core.preprocessing.utils.targets import TargetType
 from src.core.preprocessing.utils.inputs import construct_inputs_by_match
 from web.postgres_store import save_record, load_records, initialize as initialize_postgres
@@ -118,6 +119,19 @@ def create_league():
     missing = [x for x in required if not data.get(x)]
     if missing:
         return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+    # Validate against the original ProphitBet feature names. Football match
+    # columns such as HS/AS/HST/AST are raw source fields, not StatisticsEngine keys.
+    supported_stats = set(StatisticsEngine().stats_columns)
+    requested_stats = list(data["stats_columns"])
+    invalid_stats = sorted(set(requested_stats) - supported_stats)
+    if invalid_stats:
+        return jsonify({
+            "error": (
+                f"Unsupported statistics: {', '.join(invalid_stats)}. "
+                f"Supported values include: {', '.join(sorted(supported_stats))}"
+            )
+        }), 400
+
     with persistent_storage():
         db = _league_db()
         selected = next((x for x in db.leagues
