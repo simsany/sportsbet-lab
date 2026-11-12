@@ -1,0 +1,11 @@
+let catalogue=[];
+const $=id=>document.getElementById(id);
+async function api(url,opts={}){const r=await fetch(url,{headers:{"Content-Type":"application/json"},...opts});const d=await r.json();if(!r.ok)throw Error(d.error||r.statusText);return d}
+function show(id,data){$(id).textContent=JSON.stringify(data,null,2)}
+async function init(){try{catalogue=await api("/api/catalogue");const countries=[...new Set(catalogue.map(x=>x.country))].sort();$("country").innerHTML=countries.map(x=>`<option>${x}</option>`).join("");fillLeagues()}catch(e){$("createResult").textContent=e.message}}
+function fillLeagues(){const c=$("country").value;const items=catalogue.filter(x=>x.country===c);$("league").innerHTML=items.map(x=>`<option value="${x.name}">${x.name} (${x.min_year}–)</option>`).join("");if(items[0])$("year").value=Math.max(items[0].min_year,2018);$("leagueId").value=c+"-"+(items[0]?.name||"")}
+function selectLeague(id){$("trainLeague").value=id;$("predLeague").value=id;$("toast").textContent="Liga kiválasztva: "+id}
+async function createLeague(){try{const d=await api("/api/leagues",{method:"POST",body:JSON.stringify({country:$("country").value,name:$("league").value,start_year:+$("year").value,league_id:$("leagueId").value,stats_columns:$("stats").value.split(",").map(x=>x.trim()).filter(Boolean),match_history_window:+$("window").value})});show("createResult",d);location.reload()}catch(e){$("createResult").textContent=e.message}}
+async function trainModel(){try{const d=await api(`/api/leagues/${encodeURIComponent($("trainLeague").value)}/train`,{method:"POST",body:JSON.stringify({model_id:$("modelId").value,target:$("target").value,classifier:$("classifier").value,test_size:+$("testSize").value,seed:+$("seed").value})});show("trainResult",d)}catch(e){$("trainResult").textContent=e.message}}
+async function predict(){try{const d=await api(`/api/leagues/${encodeURIComponent($("predLeague").value)}/predict`,{method:"POST",body:JSON.stringify({model_id:$("predModel").value,home:$("home").value,away:$("away").value,odd_1:+$("odd1").value,odd_x:+$("oddx").value,odd_2:+$("odd2").value})});show("predictionResult",d)}catch(e){$("predictionResult").textContent=e.message}}
+init();
