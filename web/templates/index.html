@@ -1,10 +1,100 @@
 <!doctype html>
-<html lang="hu"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ProphitBet Web</title><link rel="stylesheet" href="/static/app.css"></head>
-<body><header><div><span class="eyebrow">PROPHITBET · WEB PORT</span><h1>Football prediction lab</h1><p>Az eredeti ProphitBet adatfeldolgozó és ML backend webes felülete.</p></div><span class="status">POSTGRES RECOVERY · LOCAL CACHE</span></header>
+<html lang="hu">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>ProphitBet Web</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+    <div>
+        <span class="eyebrow">PROPHITBET · WEB PORT</span>
+        <h1>Football prediction lab</h1>
+        <p>Az eredeti ProphitBet adatfeldolgozó és ML backend webes felülete.</p>
+    </div>
+    <span class="status">POSTGRES RECOVERY · LOCAL CACHE</span>
+</header>
+
 <main>
-<section class="panel"><h2>Mentett ligák</h2>{% if leagues %}<div class="league-list">{% for l in leagues %}<article><div><b>{{l.country}} · {{l.name}}</b><small>{{l.rows}} mérkőzés · {{l.id}}</small></div><button onclick="selectLeague('{{l.id}}')">Megnyitás</button></article>{% endfor %}</div>{% else %}<p class="muted">Még nincs letöltött liga. A helyreállítási beállításokat a PostgreSQL tartalmazza.</p>{% endif %}</section>
-<section class="panel"><h2>Új liga letöltése</h2><div class="form-grid"><label>Ország<select id="country" onchange="fillLeagues()"></select></label><label>Liga<select id="league"></select></label><label>Kezdő szezon<input id="year" type="number" value="2018"></label><label>League ID<input id="leagueId" placeholder="pl. England-Premier-League"></label><label>Statisztika oszlopok<input id="stats" value="HS,AS,HST,AST"></label><label>History window<input id="window" type="number" value="3"></label></div><button class="primary" onclick="createLeague()">Letöltés és mentés az eredeti backenddel</button><pre id="createResult"></pre></section>
-<section class="panel"><h2>Modell tanítása</h2><div class="form-grid"><label>League ID<input id="trainLeague" placeholder="Válaszd ki fent"></label><label>Model ID<input id="modelId" value="web-logistic-v1"></label><label>Célváltozó<select id="target"><option>Result</option><option>Result-U/O</option></select></label><label>Algoritmus<select id="classifier"><option>LogisticRegressor</option><option>RandomForest</option></select></label><label>Test size<input id="testSize" type="number" min=".1" max=".5" step=".05" value=".2"></label><label>Seed<input id="seed" type="number" value="0"></label></div><button class="primary" onclick="trainModel()">Eredeti Trainer futtatása</button><pre id="trainResult"></pre></section>
-<section class="panel"><h2>Meccs előrejelzés</h2><div class="form-grid"><label>League ID<input id="predLeague"></label><label>Model ID<input id="predModel" placeholder="web-logistic-v1"></label><label>Hazai csapat<input id="home"></label><label>Vendég csapat<input id="away"></label><label>1 odds<input id="odd1" type="number" step=".01" value="2.10"></label><label>X odds<input id="oddx" type="number" step=".01" value="3.30"></label><label>2 odds<input id="odd2" type="number" step=".01" value="3.50"></label></div><button class="primary" onclick="predict()">Valószínűségek számítása</button><pre id="predictionResult"></pre></section>
-<div id="toast" role="status"></div></main><script src="/static/app.js"></script></body></html>
+    <section class="panel">
+        <h2>Mentett ligák</h2>
+        {% if leagues %}
+        <div class="league-list">
+            {% for l in leagues %}
+            <article>
+                <div>
+                    <b>{{ l.country }} · {{ l.name }}</b>
+                    <small>{{ l.rows }} mérkőzés · {{ l.id }}</small>
+                </div>
+                <button type="button" onclick='selectLeague({{ l.id|tojson }})'>Megnyitás</button>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted">Még nincs letöltött liga. Először tölts le egy ligát.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel">
+        <h2>Új liga letöltése</h2>
+        <div class="form-grid">
+            <label>Ország<select id="country" onchange="fillLeagues()"></select></label>
+            <label>Liga<select id="league"></select></label>
+            <label>Kezdő szezon<input id="year" type="number" value="2018"></label>
+            <label>League ID<input id="leagueId" placeholder="pl. England-Premier-League"></label>
+            <label>ProphitBet feature-ök (pl. HGF,HGA,AGF,AGA)<input id="stats" value="HGF,HGA,AGF,AGA"></label>
+            <label>History window<input id="window" type="number" min="1" value="3"></label>
+        </div>
+        <button class="primary" type="button" onclick="createLeague()">Letöltés és mentés az eredeti backenddel</button>
+        <pre id="createResult" aria-live="polite"></pre>
+    </section>
+
+    <section class="panel">
+        <h2>Modell tanítása</h2>
+        <div class="form-grid">
+            <label>Mentett liga
+                <select id="trainLeague">
+                    <option value="">Ligák betöltése…</option>
+                </select>
+            </label>
+            <label>Model ID<input id="modelId" value="web-logistic-v1"></label>
+            <label>Célváltozó
+                <select id="target">
+                    <option>Result</option>
+                    <option>Result-U/O</option>
+                </select>
+            </label>
+            <label>Algoritmus
+                <select id="classifier">
+                    <option>LogisticRegressor</option>
+                    <option>RandomForest</option>
+                </select>
+            </label>
+            <label>Test size<input id="testSize" type="number" min="0.01" max="0.99" step="0.05" value="0.2"></label>
+            <label>Seed<input id="seed" type="number" value="0"></label>
+        </div>
+        <button class="primary" type="button" onclick="trainModel()">Eredeti Trainer futtatása</button>
+        <pre id="trainResult" aria-live="polite"></pre>
+    </section>
+
+    <section class="panel">
+        <h2>Meccs előrejelzés</h2>
+        <div class="form-grid">
+            <label>League ID<input id="predLeague" readonly></label>
+            <label>Model ID<input id="predModel" placeholder="web-logistic-v1"></label>
+            <label>Hazai csapat<input id="home"></label>
+            <label>Vendég csapat<input id="away"></label>
+            <label>1 odds<input id="odd1" type="number" step="0.01" value="2.10"></label>
+            <label>X odds<input id="oddx" type="number" step="0.01" value="3.30"></label>
+            <label>2 odds<input id="odd2" type="number" step="0.01" value="3.50"></label>
+        </div>
+        <button class="primary" type="button" onclick="predict()">Valószínűségek számítása</button>
+        <pre id="predictionResult" aria-live="polite"></pre>
+    </section>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
