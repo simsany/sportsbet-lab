@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 
 from src.core.database.league import LeagueDatabase
 from src.core.database.model import ModelDatabase
@@ -17,6 +18,7 @@ from src.core.models.classifiers import LogisticRegressor, RandomForest
 from src.core.models.model import ModelConfig
 from src.core.models.trainer import Trainer
 from src.core.preprocessing.filters import filter_league_odds
+from src.core.preprocessing.statistics import StatisticsEngine
 from src.core.preprocessing.utils.targets import TargetType
 from src.core.preprocessing.utils.inputs import construct_inputs_by_match
 from web.postgres_store import save_record, load_records, initialize as initialize_postgres
@@ -117,6 +119,36 @@ def create_league():
     missing = [x for x in required if not data.get(x)]
     if missing:
         return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+    # Validate and normalize before saving a recovery recipe or downloading.
+    # HS/AS/HST/AST are raw match columns, not StatisticsEngine feature keys.
+    raw_stats = data.get("stats_columns")
+    if isinstance(raw_stats, str):
+        requested_stats = [part.strip() for part in raw_stats.replace(";", ",").split(",") if part.strip()]
+    elif isinstance(raw_stats, (list, tuple)):
+        requested_stats = [str(part).strip() for part in raw_stats if str(part).strip()]
+    else:
+        return jsonify({"error": "stats_columns must be a list of ProphitBet feature names."}), 400
+
+    if not requested_stats:
+        return jsonify({"error": "Select at least one supported ProphitBet feature."}), 400
+
+    # Preserve order while removing duplicates.
+    requested_stats = list(dict.fromkeys(requested_stats))
+    supported_stats = {str(name).strip() for name in StatisticsEngine().stats_columns}
+    invalid_stats = [name for name in requested_stats if name not in supported_stats]
+    if invalid_stats:
+        return jsonify({
+            "error": (
+                f"Unsupported statistics: {', '.join(invalid_stats)}. "
+                "HS, AS, HST and AST are raw match columns, not model features. "
+                f"Supported values: {', '.join(sorted(supported_stats))}"
+            ),
+            "invalid_stats": invalid_stats,
+            "supported_stats": sorted(supported_stats),
+        }), 400
+
+    data["stats_columns"] = requested_stats
+
     with persistent_storage():
         db = _league_db()
         selected = next((x for x in db.leagues
@@ -134,8 +166,6 @@ def create_league():
             goal_diff_margin=int(data.get("goal_diff_margin", 2)),
             aggregation=data.get("aggregation", "sum"),
         )
-        # Save the recovery recipe first. If the dyno is recycled while downloading,
-        # startup can repeat the operation without losing the user's configuration.
         recovery_config = {
             "country": selected.country,
             "name": selected.name,
@@ -211,7 +241,6 @@ def train(league_id):
         recovery_config.update({"model_id": model_id, "target": target.value,
                                 "classifier": classifier_name})
         recovery_config.pop("league_id", None)
-        # Persist the recipe before training so interrupted training is retried on restart.
         save_record("model", f"{league_id}:{model_id}", recovery_config, parent_id=league_id)
 
         trainer = Trainer()
@@ -282,5 +311,8 @@ def predict(league_id):
 
 @app.errorhandler(Exception)
 def unhandled(error):
+    # Do not convert normal HTTP errors (e.g. Flask routing 404) into 500 responses.
+    if isinstance(error, HTTPException):
+        return jsonify({"error": error.description}), error.code
     app.logger.exception("Unhandled web request error")
     return jsonify({"error": str(error)}), 500
