@@ -1,22 +1,45 @@
 
-import os, time, json, threading, subprocess, sys
+import os
+import time
+import json
+import threading
+import subprocess
+import sys
+
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 from flask import Flask, jsonify, render_template, request
-from model_engine import predict as model_predict, model_status, train_all
+
+from model_engine import (
+    predict as model_predict,
+    model_status,
+    train_all
+)
 
 app = Flask(__name__)
+
 BASE_URL = "https://api.the-odds-api.com/v4"
 API_KEY = os.getenv("ODDS_API_KEY", "").strip()
-CONFIG_PATH = Path(os.getenv("DATA_DIR", ".")) / "scanner_config.json"
+
+CONFIG_PATH = (
+    Path(os.getenv("DATA_DIR", "."))
+    / "scanner_config.json"
+)
+
 CACHE_TTL = int(os.getenv("ODDS_CACHE_TTL", "90"))
+
 _lock = threading.Lock()
 _cache = {}
+
 _training_lock = threading.Lock()
-_training_state = {"status": "idle", "results": []}
+
+_training_state = {
+    "status": "idle",
+    "results": []
+}
 
 SPORT_GROUPS = {
     "football": ["soccer"],
@@ -25,6 +48,7 @@ SPORT_GROUPS = {
     "baseball": ["baseball"],
     "nfl": ["americanfootball_nfl"],
 }
+
 SPORT_LABELS = {
     "football": "Football",
     "tennis": "Tennis",
@@ -32,15 +56,43 @@ SPORT_LABELS = {
     "baseball": "Baseball",
     "nfl": "NFL",
 }
+
 FIXED_MODELS = [
-    {"id": "elo", "name": "Elo", "description": "Rating-alapú erőbecslés"},
-    {"id": "poisson", "name": "Poisson / Dixon–Coles", "description": "Gól- és ponteloszlás-alapú modell"},
-    {"id": "xgboost", "name": "XGBoost", "description": "Felügyelt gradient boosting modell"},
-    {"id": "catboost", "name": "CatBoost", "description": "Felügyelt boosting kategorikus változókkal"},
-    {"id": "lightgbm", "name": "LightGBM", "description": "Felügyelt, hatékony gradient boosting"},
+    {
+        "id": "elo",
+        "name": "Elo",
+        "description": "Rating-alapú erőbecslés"
+    },
+    {
+        "id": "poisson",
+        "name": "Poisson / Dixon–Coles",
+        "description": "Gól- és ponteloszlás-alapú modell"
+    },
+    {
+        "id": "xgboost",
+        "name": "XGBoost",
+        "description": "Felügyelt gradient boosting modell"
+    },
+    {
+        "id": "catboost",
+        "name": "CatBoost",
+        "description": "Felügyelt boosting kategorikus változókkal"
+    },
+    {
+        "id": "lightgbm",
+        "name": "LightGBM",
+        "description": "Felügyelt, hatékony gradient boosting"
+    },
 ]
+
 DEFAULT_CONFIG = {
-    "sports": ["football", "tennis", "basketball", "baseball", "nfl"],
+    "sports": [
+        "football",
+        "tennis",
+        "basketball",
+        "baseball",
+        "nfl"
+    ],
     "sport_keys": [],
     "min_odds": 1.70,
     "sort_by": "probability",
@@ -53,36 +105,62 @@ DEFAULT_CONFIG = {
 
 def load_config():
     try:
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        cfg = json.loads(
+            CONFIG_PATH.read_text(encoding="utf-8")
+        )
     except Exception:
         cfg = {}
 
-    out = {**DEFAULT_CONFIG, **cfg}
-    out["sports"] = [s for s in out.get("sports", []) if s in SPORT_LABELS]
-    out["sport_keys"] = [
-        str(k) for k in out.get("sport_keys", []) if isinstance(k, str)
+    out = {
+        **DEFAULT_CONFIG,
+        **cfg
+    }
+
+    out["sports"] = [
+        s for s in out.get("sports", [])
+        if s in SPORT_LABELS
     ]
+
+    out["sport_keys"] = [
+        str(k)
+        for k in out.get("sport_keys", [])
+        if isinstance(k, str)
+    ]
+
     out["markets"] = [
-        m for m in out.get("markets", [])
+        m
+        for m in out.get("markets", [])
         if m in {"h2h", "spreads", "totals"}
     ] or ["h2h"]
+
     out["regions"] = [
-        r for r in out.get("regions", [])
+        r
+        for r in out.get("regions", [])
         if r in {"eu", "uk", "us", "us2", "au"}
     ] or ["eu"]
 
     try:
-        out["min_odds"] = max(1.01, min(100, float(out["min_odds"])))
+        out["min_odds"] = max(
+            1.01,
+            min(100, float(out["min_odds"]))
+        )
     except Exception:
         out["min_odds"] = 1.70
 
     try:
-        out["max_picks"] = max(3, min(1000, int(out["max_picks"])))
+        out["max_picks"] = max(
+            3,
+            min(1000, int(out["max_picks"]))
+        )
     except Exception:
         out["max_picks"] = 50
 
     if out["sort_by"] not in {
-        "probability", "ev", "odds", "agreement", "start_time"
+        "probability",
+        "ev",
+        "odds",
+        "agreement",
+        "start_time"
     }:
         out["sort_by"] = "probability"
 
@@ -90,9 +168,17 @@ def load_config():
 
 
 def save_config(cfg):
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     CONFIG_PATH.write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2),
+        json.dumps(
+            cfg,
+            ensure_ascii=False,
+            indent=2
+        ),
         encoding="utf-8"
     )
 
@@ -100,50 +186,66 @@ def save_config(cfg):
 def odds_request(path, params=None):
     if not API_KEY:
         raise RuntimeError(
-            "Hiányzik az ODDS_API_KEY környezeti változó a Heroku Config Vars beállításai közül."
+            "Hiányzik az ODDS_API_KEY környezeti változó "
+            "a Heroku Config Vars beállításai közül."
         )
 
     params = dict(params or {})
     params["apiKey"] = API_KEY
+
     url = BASE_URL + path
     now = time.time()
 
     cache_key = (
         url,
         tuple(sorted(
-            (k, str(v)) for k, v in params.items() if k != "apiKey"
+            (k, str(v))
+            for k, v in params.items()
+            if k != "apiKey"
         ))
     )
 
     with _lock:
         cached = _cache.get(cache_key)
+
         if cached and now - cached[0] < CACHE_TTL:
             return cached[1], cached[2], True
 
     try:
-        resp = requests.get(url, params=params, timeout=25)
+        resp = requests.get(
+            url,
+            params=params,
+            timeout=25
+        )
     except requests.RequestException as e:
-        raise RuntimeError(f"Odds API hálózati hiba: {e}")
+        raise RuntimeError(
+            f"Odds API hálózati hiba: {e}"
+        )
 
     if resp.status_code == 401:
         raise RuntimeError(
-            "Odds API 401: az ODDS_API_KEY érvénytelen vagy nem ehhez az API-hoz tartozik."
+            "Odds API 401: az ODDS_API_KEY érvénytelen "
+            "vagy nem ehhez az API-hoz tartozik."
         )
 
     if resp.status_code == 429:
         raise RuntimeError(
-            "Odds API 429: elérted a kérési korlátot. Ellenőrizd a kvótát."
+            "Odds API 429: elérted a kérési korlátot. "
+            "Ellenőrizd a kvótát."
         )
 
     if resp.status_code >= 400:
         raise RuntimeError(
-            f"Odds API HTTP {resp.status_code}: {resp.text[:500]}"
+            f"Odds API HTTP {resp.status_code}: "
+            f"{resp.text[:500]}"
         )
 
     try:
         data = resp.json()
     except ValueError:
-        raise RuntimeError("Az Odds API nem JSON választ adott.")
+        raise RuntimeError(
+            "Az Odds API nem JSON választ adott."
+        )
 
     quota = {
         k: resp.headers.get(k)
@@ -155,28 +257,45 @@ def odds_request(path, params=None):
     }
 
     with _lock:
-        _cache[cache_key] = (now, data, quota)
+        _cache[cache_key] = (
+            now,
+            data,
+            quota
+        )
 
     return data, quota, False
 
 
 def get_sports_catalog():
-    data, quota, cached = odds_request("/sports", {})
+    data, quota, cached = odds_request(
+        "/sports",
+        {}
+    )
+
     return data, quota, cached
 
 
 def classify_sport(sport_obj):
-    key = (sport_obj.get("key") or "").lower()
-    group = (sport_obj.get("group") or "").lower()
+    key = (
+        sport_obj.get("key") or ""
+    ).lower()
+
+    group = (
+        sport_obj.get("group") or ""
+    ).lower()
 
     if key.startswith("soccer_") or "soccer" in group:
         return "football"
+
     if key.startswith("tennis_") or "tennis" in group:
         return "tennis"
+
     if key.startswith("basketball_") or "basketball" in group:
         return "basketball"
+
     if key.startswith("baseball_") or "baseball" in group:
         return "baseball"
+
     if key == "americanfootball_nfl":
         return "nfl"
 
@@ -189,17 +308,46 @@ def decimal_price(price, fmt="decimal"):
 
         if fmt == "decimal":
             return p
+
         if p > 0:
             return 1 + (p / 100)
 
         return 1 + (100 / abs(p))
+
     except Exception:
         return None
 
 
-def build_market_picks(event, selected_markets, min_odds):
+def build_market_picks(
+    event,
+    selected_markets,
+    min_odds
+):
     rows = []
+
     books = event.get("bookmakers") or []
+
+    sport_name = classify_sport({
+        "key": event.get("sport_key", ""),
+        "group": event.get("sport_title", "")
+    })
+
+    model_result = None
+    model_error = None
+
+    # Egy esemény modelljét csak egyszer számoljuk ki.
+    if sport_name:
+        try:
+            model_result = model_predict(
+                sport_name,
+                str(event.get("home_team", "")),
+                str(event.get("away_team", "")),
+                event.get("commence_time")
+            )
+        except Exception as exc:
+            model_error = (
+                f"{type(exc).__name__}: {exc}"
+            )[:300]
 
     for market_key in selected_markets:
         by_selection = defaultdict(list)
@@ -207,7 +355,8 @@ def build_market_picks(event, selected_markets, min_odds):
         for book in books:
             market = next(
                 (
-                    m for m in book.get("markets", [])
+                    m
+                    for m in book.get("markets", [])
                     if m.get("key") == market_key
                 ),
                 None
@@ -220,12 +369,20 @@ def build_market_picks(event, selected_markets, min_odds):
             implied = []
 
             for outcome in outcomes:
-                price = decimal_price(outcome.get("price"))
+                price = decimal_price(
+                    outcome.get("price")
+                )
 
                 if price and price > 1:
-                    implied.append((outcome, price))
+                    implied.append((
+                        outcome,
+                        price
+                    ))
 
-            total = sum(1 / p for _, p in implied)
+            total = sum(
+                1 / p
+                for _, p in implied
+            )
 
             if total <= 0:
                 continue
@@ -233,8 +390,14 @@ def build_market_picks(event, selected_markets, min_odds):
             for outcome, price in implied:
                 name = outcome.get("name", "")
                 point = outcome.get("point")
+
                 selection = (
-                    f"{name}" + (f" ({point})" if point is not None else "")
+                    f"{name}"
+                    + (
+                        f" ({point})"
+                        if point is not None
+                        else ""
+                    )
                 )
 
                 by_selection[selection].append({
@@ -244,43 +407,31 @@ def build_market_picks(event, selected_markets, min_odds):
                         or "Unknown"
                     ),
                     "price": price,
-                    "fair_prob": (1 / price) / total,
-                    "last_update": market.get("last_update")
+                    "fair_prob": (
+                        (1 / price) / total
+                    ),
+                    "last_update": market.get(
+                        "last_update"
+                    )
                 })
 
         for selection, offers in by_selection.items():
-            best = max(offers, key=lambda x: x["price"])
+            best = max(
+                offers,
+                key=lambda x: x["price"]
+            )
+
             avg_fair = sum(
-                x["fair_prob"] for x in offers
+                x["fair_prob"]
+                for x in offers
             ) / len(offers)
 
-            market_ev = (avg_fair * best["price"]) - 1
+            market_ev = (
+                avg_fair * best["price"]
+            ) - 1
 
             if best["price"] < min_odds:
                 continue
-
-            model_result = None
-            model_error = None
-
-            sport_name = classify_sport({
-                "key": event.get("sport_key", ""),
-                "group": event.get("sport_title", "")
-            })
-
-            # Jelenleg csak a h2h / Moneyline modell-előrejelzés van bekötve.
-            # Spread és Totals esetén nem szabad hamis modellbecslést mutatni.
-            if market_key == "h2h" and sport_name:
-                try:
-                    model_result = model_predict(
-                        sport_name,
-                        str(event.get("home_team", "")),
-                        str(event.get("away_team", "")),
-                        event.get("commence_time")
-                    )
-                except Exception as exc:
-                    model_error = (
-                        f"{type(exc).__name__}: {exc}"
-                    )[:300]
 
             model_probability = None
             model_ev = None
@@ -288,31 +439,58 @@ def build_market_picks(event, selected_markets, min_odds):
             uncertainty = None
             models_used = 0
 
-            if model_result:
+            # A jelenlegi modell csak Moneyline piacra ad becslést.
+            if (
+                market_key == "h2h"
+                and model_result
+            ):
                 outcome_name = (
-                    str(selection).split(" (")[0].strip().lower()
+                    str(selection)
+                    .split(" (")[0]
+                    .strip()
+                    .lower()
                 )
+
                 home_name = (
-                    str(event.get("home_team", "")).strip().lower()
+                    str(event.get("home_team", ""))
+                    .strip()
+                    .lower()
                 )
+
                 away_name = (
-                    str(event.get("away_team", "")).strip().lower()
+                    str(event.get("away_team", ""))
+                    .strip()
+                    .lower()
                 )
 
                 if outcome_name == home_name:
                     outcome_index = 0
-                elif sport_name == "football" and outcome_name in {
-                    "draw", "tie"
-                }:
+
+                elif (
+                    sport_name == "football"
+                    and outcome_name in {"draw", "tie"}
+                ):
                     outcome_index = 1
-                elif sport_name == "football" and outcome_name == away_name:
+
+                elif (
+                    sport_name == "football"
+                    and outcome_name == away_name
+                ):
                     outcome_index = 2
-                elif sport_name != "football" and outcome_name == away_name:
+
+                elif (
+                    sport_name != "football"
+                    and outcome_name == away_name
+                ):
                     outcome_index = 1
+
                 else:
                     outcome_index = None
 
-                probabilities = model_result.get("probabilities", [])
+                probabilities = model_result.get(
+                    "probabilities",
+                    []
+                )
 
                 if (
                     outcome_index is not None
@@ -323,28 +501,38 @@ def build_market_picks(event, selected_markets, min_odds):
                     )
 
                     participating = model_result.get(
-                        "model_probabilities", {}
+                        "model_probabilities",
+                        {}
                     )
+
                     models_used = len(participating)
 
                     votes = sum(
                         1
                         for probs in participating.values()
-                        if int(max(
-                            range(len(probs)),
-                            key=lambda i: probs[i]
-                        )) == outcome_index
+                        if int(
+                            max(
+                                range(len(probs)),
+                                key=lambda i: probs[i]
+                            )
+                        ) == outcome_index
                     )
 
                     model_agreement = (
-                        f"{votes}/{models_used}" if models_used else None
+                        f"{votes}/{models_used}"
+                        if models_used
+                        else None
                     )
 
                     model_ev = (
-                        probabilities[outcome_index] * best["price"] - 1
+                        probabilities[outcome_index]
+                        * best["price"]
+                        - 1
                     ) * 100
 
-                    uncertainty = model_result.get("uncertainty")
+                    uncertainty = model_result.get(
+                        "uncertainty"
+                    )
 
             rows.append({
                 "event_id": event.get("id"),
@@ -355,32 +543,44 @@ def build_market_picks(event, selected_markets, min_odds):
                 "commence_time": event.get("commence_time"),
                 "market": market_key,
                 "selection": selection,
-                "best_odds": round(best["price"], 3),
+                "best_odds": round(
+                    best["price"],
+                    3
+                ),
                 "best_bookmaker": best["bookmaker"],
                 "bookmaker_count": len(offers),
-                "market_probability": round(avg_fair * 100, 2),
+                "market_probability": round(
+                    avg_fair * 100,
+                    2
+                ),
                 "implied_probability": round(
-                    (1 / best["price"]) * 100, 2
+                    (1 / best["price"]) * 100,
+                    2
                 ),
                 "market_price_vs_consensus_pct": round(
-                    market_ev * 100, 2
+                    market_ev * 100,
+                    2
                 ),
                 "model_probability": (
                     round(model_probability, 2)
-                    if model_probability is not None else None
+                    if model_probability is not None
+                    else None
                 ),
                 "model_agreement": model_agreement,
                 "model_ev": (
                     round(model_ev, 2)
-                    if model_ev is not None else None
+                    if model_ev is not None
+                    else None
                 ),
                 "uncertainty": (
                     round(uncertainty, 2)
-                    if uncertainty is not None else None
+                    if uncertainty is not None
+                    else None
                 ),
                 "training_rows": (
                     model_result.get("training_rows")
-                    if model_result else None
+                    if model_result
+                    else None
                 ),
                 "models_used": models_used,
                 "model_error": model_error,
@@ -399,13 +599,17 @@ def build_market_picks(event, selected_markets, min_odds):
 def fetch_scan(cfg):
     if not API_KEY:
         raise RuntimeError(
-            "ODDS_API_KEY nincs beállítva a Heroku Config Vars-ban."
+            "ODDS_API_KEY nincs beállítva "
+            "a Heroku Config Vars-ban."
         )
 
-    catalog, catalog_quota, catalog_cached = get_sports_catalog()
+    catalog, catalog_quota, catalog_cached = (
+        get_sports_catalog()
+    )
 
     active = [
-        s for s in catalog
+        s
+        for s in catalog
         if s.get("active")
         and classify_sport(s) in cfg["sports"]
         and not s.get("has_outrights")
@@ -419,21 +623,31 @@ def fetch_scan(cfg):
     picks = []
     errors = []
     quotas = [catalog_quota]
-    found = {s: 0 for s in cfg["sports"]}
+
+    found = {
+        s: 0
+        for s in cfg["sports"]
+    }
 
     for sport in cfg["sports"]:
         candidates = grouped.get(sport, [])
 
-        if cfg.get("sport_keys"):
+        # Ha nincs explicit ligaválasztás,
+        # minden elérhető aktív liga bekerül.
+        selected_keys = cfg.get("sport_keys") or []
+
+        if selected_keys:
             candidates = [
-                sp for sp in candidates
-                if sp.get("key") in cfg["sport_keys"]
+                sp
+                for sp in candidates
+                if sp.get("key") in selected_keys
             ]
 
         if not candidates:
             errors.append(
-                f"{SPORT_LABELS[sport]}: az API kulcsod csomagjában "
-                "nincs aktív sport/versenysorozat."
+                f"{SPORT_LABELS[sport]}: az API kulcsod "
+                "csomagjában nincs aktív sport/versenysorozat, "
+                "vagy a kiválasztott ligák között nincs ilyen."
             )
             continue
 
@@ -450,17 +664,24 @@ def fetch_scan(cfg):
                 )
 
                 quotas.append(quota)
+
                 found[sport] += len(data)
 
                 for event in data:
                     commence = event.get("commence_time")
 
-                    if not cfg["include_inplay"] and commence:
+                    if (
+                        not cfg["include_inplay"]
+                        and commence
+                    ):
                         try:
-                            if datetime.fromisoformat(
+                            event_dt = datetime.fromisoformat(
                                 commence.replace("Z", "+00:00")
-                            ) < datetime.now(timezone.utc):
+                            )
+
+                            if event_dt < datetime.now(timezone.utc):
                                 continue
+
                         except Exception:
                             pass
 
@@ -496,7 +717,7 @@ def fetch_scan(cfg):
                 p["model_probability"] is not None,
                 p["model_probability"]
                 if p["model_probability"] is not None
-                else p["market_probability"],
+                else -1,
                 p["best_odds"]
             ),
             reverse=True
@@ -523,7 +744,7 @@ def fetch_scan(cfg):
         picks.sort(
             key=lambda p: (
                 p["model_agreement"] is not None,
-                p["model_agreement"] or "",
+                p["models_used"],
                 p["bookmaker_count"]
             ),
             reverse=True
@@ -602,19 +823,33 @@ def _run_training():
                 capture_output=True,
                 text=True,
                 timeout=int(
-                    os.getenv("TRAINING_TIMEOUT_SECONDS", "2400")
+                    os.getenv(
+                        "TRAINING_TIMEOUT_SECONDS",
+                        "2400"
+                    )
                 )
             )
 
             results = train_all()
+
             trained = sum(
-                1 for item in results
+                1
+                for item in results
                 if item.get("status") == "trained"
+            )
+
+            failed = sum(
+                1
+                for item in results
+                if item.get("status") not in {
+                    "trained",
+                    "already_trained"
+                }
             )
 
             status = (
                 "completed"
-                if proc.returncode == 0 and trained == len(results)
+                if proc.returncode == 0 and failed == 0
                 else (
                     "completed_with_warnings"
                     if trained
@@ -634,8 +869,8 @@ def _run_training():
 
             if proc.returncode != 0 and not trained:
                 _training_state["error"] = (
-                    "Az adatletöltés nem adott használható tanítóadatot. "
-                    "Nézd meg a logot."
+                    "Az adatletöltés nem adott használható "
+                    "tanítóadatot. Nézd meg a logot."
                 )
 
         except Exception as exc:
@@ -661,7 +896,9 @@ def api_train():
         and request.headers.get("X-Training-Token")
         != os.getenv("TRAINING_ADMIN_TOKEN")
     ):
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({
+            "error": "Unauthorized"
+        }), 401
 
     threading.Thread(
         target=_run_training,
@@ -686,22 +923,27 @@ def update_config():
 
     if "sports" in incoming:
         cfg["sports"] = [
-            s for s in incoming["sports"]
+            s
+            for s in incoming["sports"]
             if s in SPORT_LABELS
         ]
 
     if "sport_keys" in incoming:
         cfg["sport_keys"] = [
-            str(k) for k in incoming["sport_keys"]
+            str(k)
+            for k in incoming["sport_keys"]
             if isinstance(k, str)
         ][:200]
 
     if "min_odds" in incoming:
         try:
             x = float(incoming["min_odds"])
+
             if not 1.01 <= x <= 100:
                 raise ValueError()
+
             cfg["min_odds"] = x
+
         except Exception:
             return jsonify({
                 "error": "Minimum odds: 1.01–100."
@@ -710,9 +952,12 @@ def update_config():
     if "max_picks" in incoming:
         try:
             x = int(incoming["max_picks"])
+
             if not 3 <= x <= 1000:
                 raise ValueError()
+
             cfg["max_picks"] = x
+
         except Exception:
             return jsonify({
                 "error": "Tippek száma: 3–1000."
@@ -734,7 +979,8 @@ def update_config():
 
     if "markets" in incoming:
         cfg["markets"] = [
-            m for m in incoming["markets"]
+            m
+            for m in incoming["markets"]
             if m in {"h2h", "spreads", "totals"}
         ]
 
@@ -745,7 +991,8 @@ def update_config():
 
     if "regions" in incoming:
         cfg["regions"] = [
-            r for r in incoming["regions"]
+            r
+            for r in incoming["regions"]
             if r in {"eu", "uk", "us", "us2", "au"}
         ]
 
@@ -773,6 +1020,7 @@ def update_config():
 def api_sports():
     try:
         catalog, quota, cached = get_sports_catalog()
+
         available = []
 
         for sport in catalog:
@@ -793,7 +1041,9 @@ def api_sports():
         })
 
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return jsonify({
+            "error": str(exc)
+        }), 502
 
 
 @app.post("/api/scan")
@@ -802,6 +1052,7 @@ def api_scan():
 
     try:
         return jsonify(fetch_scan(cfg))
+
     except Exception as exc:
         return jsonify({
             "error": str(exc),
@@ -809,11 +1060,19 @@ def api_scan():
         }), 502
 
 
+# FIX:
+# Korábban a feltétel "not any(... trained ...)" volt.
+# Ez azt jelentette, hogy ha akár egyetlen sportág már
+# betanult, a többi hiányzó sportág automatikus tanítása
+# többé nem indult el.
+#
+# Most akkor indul el, ha legalább egy sportág nincs
+# betanítva vagy hibás állapotú.
 if (
     os.getenv("AUTO_TRAIN", "1").lower()
     in {"1", "true", "yes"}
-    and not any(
-        x.get("status") == "trained"
+    and any(
+        x.get("status") != "trained"
         for x in model_status()
     )
 ):
