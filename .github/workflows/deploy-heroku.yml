@@ -7,6 +7,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run tests
@@ -36,8 +39,7 @@ jobs:
         run: python -m compileall -q .
 
       - name: Run tests
-        run: |
-          python -m pytest -q
+        run: python -m pytest -q
 
   deploy:
     name: Deploy to Heroku
@@ -56,15 +58,39 @@ jobs:
           if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
             git fetch --unshallow
           fi
-          git rev-parse --is-shallow-repository
+
+          if [ "$(git rev-parse --is-shallow-repository)" != "false" ]; then
+            echo "Git repository is still shallow."
+            exit 1
+          fi
 
       - name: Verify Heroku secrets
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
           HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
-          test -n "$HEROKU_API_KEY"
-          test -n "$HEROKU_APP_NAME"
+          test -n "$HEROKU_API_KEY" || {
+            echo "HEROKU_API_KEY is missing"
+            exit 1
+          }
+
+          test -n "$HEROKU_APP_NAME" || {
+            echo "HEROKU_APP_NAME is missing"
+            exit 1
+          }
+
+      - name: Install Heroku CLI
+        run: |
+          curl -fsSL https://cli-assets.heroku.com/install.sh | sh
+          heroku --version
+
+      - name: Switch to buildpack deployment
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
+        run: |
+          heroku stack:set heroku-24 \
+            --app "$HEROKU_APP_NAME"
 
       - name: Deploy to Heroku
         env:
@@ -72,6 +98,8 @@ jobs:
           HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
           git remote remove heroku 2>/dev/null || true
+
           git remote add heroku \
             "https://heroku:${HEROKU_API_KEY}@git.heroku.com/${HEROKU_APP_NAME}.git"
+
           git push heroku HEAD:main
